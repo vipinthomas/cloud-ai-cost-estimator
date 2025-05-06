@@ -5,152 +5,207 @@ import requests
 from bs4 import BeautifulSoup
 import re
 
-st.set_page_config(page_title="Azure AI Model Cost Estimator & Comparison", layout="centered")
+# Page configuration
+st.set_page_config(page_title="Universal AI & OCR Cost Estimator", layout="wide")
 
-@st.cache_data(show_spinner=False)
-def fetch_all_model_prices():
-    """
-    Scrape all pricing tables on the Azure OpenAI Service page.
-    Returns dict: model_name -> {'prompt': price_per_1k, 'completion': price_per_1k}
-    """
+# Fetch dynamic Azure OpenAI pricing
+def fetch_openai_pricing():
     url = "https://azure.microsoft.com/en-us/pricing/details/cognitive-services/openai-service/"
     pricing = {}
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
-        # Iterate all tables to capture every model
         for table in soup.find_all('table'):
             headers = [th.get_text(strip=True) for th in table.find_all('th')]
             if 'Model' not in headers:
                 continue
-            # find prompt and completion columns
-            prompt_idx = next((i for i, h in enumerate(headers) if 'Prompt' in h or 'Input' in h), None)
-            comp_idx = next((i for i, h in enumerate(headers) if 'Completion' in h or 'Output' in h), None)
-            if prompt_idx is None or comp_idx is None:
+            p_idx = next((i for i,h in enumerate(headers) if 'Prompt' in h or 'Input' in h), None)
+            c_idx = next((i for i,h in enumerate(headers) if 'Completion' in h or 'Output' in h), None)
+            if p_idx is None or c_idx is None:
                 continue
-            # parse rows, accumulate
             for row in table.find_all('tr')[1:]:
                 cols = row.find_all('td')
-                if len(cols) <= max(prompt_idx, comp_idx):
+                if len(cols) <= max(p_idx, c_idx):
                     continue
                 name = cols[0].get_text(strip=True)
-                p_txt = cols[prompt_idx].get_text(strip=True)
-                c_txt = cols[comp_idx].get_text(strip=True)
+                p_txt, c_txt = cols[p_idx].get_text(), cols[c_idx].get_text()
                 m1 = re.search(r"\$([\d,]+\.?\d*)", p_txt)
                 m2 = re.search(r"\$([\d,]+\.?\d*)", c_txt)
-                if not m1 or not m2:
-                    continue
-                p = float(m1.group(1).replace(',', '')) / 1000
-                c = float(m2.group(1).replace(',', '')) / 1000
-                pricing[name] = {'prompt': p, 'completion': c}
-    except Exception:
+                if m1 and m2:
+                    pricing[name] = {
+                        'prompt': float(m1.group(1).replace(',', ''))/1000,
+                        'completion': float(m2.group(1).replace(',', ''))/1000
+                    }
+    except:
         pass
     return pricing
 
-# Fetch dynamic pricing and merge with static fallbacks
-dynamic_prices = fetch_all_model_prices()
-STATIC_MAP = {
-    "GPT-3.5 Turbo":                {'prompt': 0.0015,    'completion': 0.002},
-    "GPT-35 Turbo 16K":             {'prompt': 0.003,     'completion': 0.004},
-    "GPT-4":                        {'prompt': 0.03,      'completion': 0.06},
-    "GPT-4o":                       {'prompt': 0.00275,   'completion': 0.011},
-    "GPT-4.5 Preview (2025-02-27 Global)": {'prompt': 75/1000, 'completion': 150/1000},
-    "o1 2024-12-17 Global":         {'prompt': 15/1000,   'completion': 60/1000},
-    "o3 mini (2025-01-31 Global)":  {'prompt': 1.10/1000, 'completion': 4.40/1000},
-    "Computer-Using Agent (CUA)":    {'prompt': 3/1000,    'completion': 12/1000},
-    "GPT-4o Realtime Preview (2024-12-17 Global)": {'prompt': 5/1000, 'completion': 20/1000},
-    "GPT-4o Mini Realtime Preview (2024-12-17 Global)": {'prompt': 0.60/1000, 'completion': 2.40/1000},
+# Static pricing defaults for core GPT models
+STATIC_PRICING = {
+    'GPT-3.5 Turbo':      {'prompt':0.0015,   'completion':0.002},
+    'GPT-3.5 Turbo 16K':  {'prompt':0.003,    'completion':0.004},
+    'GPT-4':              {'prompt':0.03,     'completion':0.06},
+    'GPT-4o':             {'prompt':0.00275,  'completion':0.011},
+    'GPT-4.5 Preview':    {'prompt':0.075,    'completion':0.150},
+    'o3-mini Global':     {'prompt':0.00110,  'completion':0.00440}
 }
-PRICING_MAP = {**STATIC_MAP, **dynamic_prices}
+# Combine dynamic and static pricing
+dynamic = fetch_openai_pricing()
+PRICING = {**STATIC_PRICING, **dynamic}
 
-# Metadata for top 10 models
-MODEL_METADATA = [
-    {"Model": "GPT-3.5 Turbo", "Release Date": "2022-11-30", "Popularity": 1},
-    {"Model": "GPT-4", "Release Date": "2023-03-14", "Popularity": 2},
-    {"Model": "GPT-4o", "Release Date": "2024-05-01", "Popularity": 3},
-    {"Model": "GPT-3.5 Turbo 16K", "Release Date": "2023-06-01", "Popularity": 4},
-    {"Model": "GPT-4.5 Preview (2025-02-27 Global)", "Release Date": "2025-02-27", "Popularity": 5},
-    {"Model": "o3 mini (2025-01-31 Global)", "Release Date": "2025-01-31", "Popularity": 6},
-    {"Model": "o1 2024-12-17 Global", "Release Date": "2024-12-17", "Popularity": 7},
-    {"Model": "o1 preview (2024-09-12 Global)", "Release Date": "2024-09-12", "Popularity": 8},
-    {"Model": "GPT-4o Realtime Preview (2024-12-17 Global)", "Release Date": "2024-12-17", "Popularity": 9},
-    {"Model": "GPT-4o Mini Realtime Preview (2024-12-17 Global)","Release Date":"2024-12-17","Popularity":10},
+# Models metadata
+top_models = [
+    {'Model':'GPT-3.5 Turbo','Release':'2022-11-30'},
+    {'Model':'GPT-4','Release':'2023-03-14'},
+    {'Model':'GPT-4o','Release':'2024-05-01'},
+    {'Model':'GPT-4.5 Preview','Release':'2025-02-27'},
+    {'Model':'o3-mini Global','Release':'2025-01-31'}
 ]
 
-# User inputs
-title = "Azure AI Model Cost Estimator & Comparison"
-st.title(title)
-prompt_tokens = st.number_input("Avg prompt tokens per doc", min_value=0, value=2000, step=100)
-completion_tokens = st.number_input("Avg completion tokens per doc", min_value=0, value=500, step=100)
-docs_per_month = st.number_input("Docs processed per month", min_value=0, value=100, step=1)
-model = st.selectbox("Select model for estimate", sorted(PRICING_MAP.keys()))
-prompt_price = PRICING_MAP[model]['prompt']
-completion_price = PRICING_MAP[model]['completion']
+# Static equivalents for non-Azure providers
+equivalents_static = {
+    'GPT-3.5 Turbo': {
+        'OpenAI':    {'model':'gpt-3.5-turbo','prompt':0.0015,'completion':0.002},
+        'GCP':       {'model':'PaLM 2','prompt':0.002,'completion':0.003},
+        'Anthropic': {'model':'Claude 2','prompt':0.0018,'completion':0.0025},
+        'Mistral':   {'model':'Mistral 7B','prompt':0.00025,'completion':0.00025}
+    },
+    'GPT-4': {
+        'OpenAI':    {'model':'gpt-4','prompt':0.03,'completion':0.06},
+        'GCP':       {'model':'PaLM 2 Pro','prompt':0.04,'completion':0.08},
+        'Anthropic': {'model':'Claude 3','prompt':0.025,'completion':0.05},
+        'Mistral':   {'model':'Mistral 7B Instruct','prompt':0.00025,'completion':0.00025}
+    },
+    'GPT-4o': {
+        'OpenAI':    {'model':'gpt-4o','prompt':0.00275,'completion':0.011},
+        'GCP':       {'model':'PaLM 2 Vision','prompt':0.05,'completion':0.1},
+        'Anthropic': {'model':'Claude 2 Vision','prompt':0.03,'completion':0.06},
+        'Mistral':   {'model':'Mistral Vision','prompt':0.00025,'completion':0.00025}
+    },
+    'GPT-4.5 Preview': {
+        'OpenAI':    {'model':'gpt-4.5-preview','prompt':0.075,'completion':0.15},
+        'GCP':       {'model':'Gemini Pro','prompt':0.05,'completion':0.1},
+        'Anthropic': {'model':'Claude 3 Sonnet','prompt':0.03,'completion':0.06},
+        'Mistral':   {'model':'Mistral Perf 7B','prompt':0.00025,'completion':0.00025}
+    },
+    'o3-mini Global': {
+        'OpenAI':    {'model':'gpt-3.5-turbo-mini','prompt':0.00110,'completion':0.00440},
+        'GCP':       {'model':'PaLM 2 Small','prompt':0.005,'completion':0.02},
+        'Anthropic': {'model':'Claude Instant','prompt':0.002,'completion':0.007},
+        'Mistral':   {'model':'Mistral Mega B','prompt':0.00025,'completion':0.00025}
+    }
+}
 
-# Single-model estimate
-tot_p = prompt_tokens * docs_per_month
-tot_c = completion_tokens * docs_per_month
-cost_p = tot_p / 1000 * prompt_price
-cost_c = tot_c / 1000 * completion_price
-total = cost_p + cost_c
+# Build equivalents dict with dynamic Azure entries
+equivalents = {}
+for m in equivalents_static:
+    azure_rates = PRICING.get(m, {'prompt': None, 'completion': None})
+    equivalents[m] = {
+        'Azure':     {'model': m, 'prompt': azure_rates['prompt'], 'completion': azure_rates['completion']},
+        **equivalents_static[m]
+    }
 
-st.subheader("Estimated Monthly Cost for Selected Model")
-st.markdown(f"- **Model:** {model}")
-st.markdown(f"- Prompt tokens: {tot_p:,} → ${cost_p:,.2f}")
-st.markdown(f"- Completion tokens: {tot_c:,} → ${cost_c:,.2f}")
-st.markdown(f"### **Total: ${total:,.2f}**")
+# Sidebar inputs
+st.sidebar.header("Settings")
+mode = st.sidebar.selectbox("Mode", ["AI Model Cost","OCR Cost"])
 
-# Export to Excel in a single sheet with inputs, selected model, and comparison
-buffer = io.BytesIO()
-with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-    sheet_name = 'Report'
-    # Write Inputs at the top
-    inputs_df = pd.DataFrame({
-        'Parameter': ['Model', 'Avg prompt tokens/doc', 'Avg completion tokens/doc', 'Docs/month', 'Prompt price ($/1K)', 'Completion price ($/1K)'],
-        'Value': [model, prompt_tokens, completion_tokens, docs_per_month, prompt_price, completion_price]
-    })
-    inputs_df.to_excel(writer, index=False, sheet_name=sheet_name, startrow=0)
-    # Write Selected Model Cost below inputs
-    cost_df = pd.DataFrame({
-        'Parameter': ['Total prompt tokens', 'Total completion tokens', 'Cost for prompts ($)', 'Cost for completions ($)', 'Total estimated cost ($)'],
-        'Value': [tot_p, tot_c, round(cost_p,2), round(cost_c,2), round(total,2)]
-    })
-    start_row = len(inputs_df) + 3  # blank row separation
-    cost_df.to_excel(writer, index=False, sheet_name=sheet_name, startrow=start_row)
-    # Write Comparison table below cost
-    df_meta = pd.DataFrame(MODEL_METADATA)
-    df_meta['Release Date'] = pd.to_datetime(df_meta['Release Date'])
-    prices_df = pd.DataFrame.from_dict(PRICING_MAP, orient='index').reset_index().rename(columns={'index':'Model','prompt':'Prompt Price','completion':'Completion Price'})
-    comp_df = df_meta.merge(prices_df, on='Model', how='left')
-    comp_df['Cost (Prompt)'] = comp_df['Prompt Price'] * tot_p / 1000
-    comp_df['Cost (Completion)'] = comp_df['Completion Price'] * tot_c / 1000
-    comp_df['Total Cost'] = comp_df['Cost (Prompt)'] + comp_df['Cost (Completion)']
-    comp_df = comp_df.sort_values(['Release Date','Popularity'], ascending=[False,True])
-    comp_start = start_row + len(cost_df) + 3  # blank rows
-    comp_df.to_excel(writer, index=False, sheet_name=sheet_name, startrow=comp_start)
-buffer.seek(0)
-st.download_button('Download Excel Report', data=buffer, file_name='azure_ai_cost_report.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+if mode == "AI Model Cost":
+    st.header("AI Model Cost Estimator")
+    in_tok  = st.sidebar.number_input("Prompt tokens/doc",    2000, step=100)
+    out_tok = st.sidebar.number_input("Completion tokens/doc", 500,  step=100)
+    docs    = st.sidebar.number_input("Docs per month",        100,  step=1)
+    model   = st.sidebar.selectbox("Model", list(PRICING.keys()))
 
-# Dynamic comparison table display remains unchanged
-("Top 10 Models: Cost Comparison Based on Your Inputs")
-st.dataframe(
-    comp_df[['Model','Release Date','Popularity','Prompt Price','Completion Price','Cost (Prompt)','Cost (Completion)','Total Cost']]
-    .style
-    .format({
-        'Release Date': lambda x: x.strftime('%Y-%m-%d'),
-        'Prompt Price': '{:.2f}',
-        'Completion Price': '{:.2f}',
-        'Cost (Prompt)': '${:,.2f}'.format,
-        'Cost (Completion)': '${:,.2f}'.format,
-        'Total Cost': '${:,.2f}'.format
-    })
-    .set_table_styles([
-        {'selector': 'th', 'props': [('background-color', '#f0f0f0'), ('font-weight', 'bold'), ('min-width', '120px'), ('text-align', 'left')]},
-        {'selector': 'td', 'props': [('min-width', '120px'), ('text-align', 'right')]}    ])
-    .set_properties(subset=['Model','Release Date'], **{'text-align':'left'})
-    , use_container_width=True
-)
+    p_rate  = PRICING[model]['prompt']
+    c_rate  = PRICING[model]['completion']
+    t_in    = in_tok * docs
+    t_out   = out_tok * docs
+    cost_in = t_in/1000 * p_rate
+    cost_out= t_out/1000 * c_rate
+    total   = cost_in + cost_out
 
-st.info("Install dependencies: pip install streamlit pandas beautifulsoup4 && run with `streamlit run cost_estimator.py`. ")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Prompt Rate ($/1K)", f"{p_rate:.4f}")
+    col2.metric("Completion Rate ($/1K)", f"{c_rate:.4f}")
+    col3.metric("Monthly Cost", f"${total:,.2f}")
 
+    # Top models table
+    st.subheader("Top Model Cost Comparison")
+    df_top = pd.DataFrame(top_models)
+    df_top['Release'] = pd.to_datetime(df_top['Release'])
+    price_df = pd.DataFrame.from_dict(PRICING, orient='index')\
+                   .reset_index().rename(columns={'index':'Model','prompt':'Prompt Price','completion':'Completion Price'})
+    df_comp = df_top.merge(price_df, on='Model', how='left')
+    df_comp['Cost In']  = df_comp['Prompt Price']    * t_in/1000
+    df_comp['Cost Out'] = df_comp['Completion Price'] * t_out/1000
+    df_comp['Total']    = df_comp['Cost In'] + df_comp['Cost Out']
+    st.dataframe(df_comp.style.format({
+        'Release':'{:%Y-%m-%d}',
+        'Prompt Price':'{:.2f}',
+        'Completion Price':'{:.2f}',
+        'Cost In':'${:,.2f}',
+        'Cost Out':'${:,.2f}',
+        'Total':'${:,.2f}'
+    }), use_container_width=True)
+
+    # Multi-cloud comparison
+    st.subheader(f"Multi-Cloud Cost Comparison for {model}")
+    mc = equivalents.get(model, {})
+    rows = []
+    for prov, info in mc.items():
+        ci = t_in/1000 * info['prompt'] if info['prompt'] is not None else None
+        co = t_out/1000 * info['completion'] if info['completion'] is not None else None
+        rows.append({'Provider':prov, 'Model':info['model'], 'Cost Prompt ($)':ci, 'Cost Completion ($)':co, 'Total Cost ($)': (ci or 0)+(co or 0)})
+    df_mc = pd.DataFrame(rows)
+    st.dataframe(df_mc.style.format({
+        'Cost Prompt ($)':'${:,.2f}',
+        'Cost Completion ($)':'${:,.2f}',
+        'Total Cost ($)':'${:,.2f}'
+    }), use_container_width=True)
+
+    # Export report
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+        summary = pd.DataFrame([
+            {'Parameter':'Mode','Value':mode},
+            {'Parameter':'Model','Value':model},
+            {'Parameter':'Prompt tokens/doc','Value':in_tok},
+            {'Parameter':'Completion tokens/doc','Value':out_tok},
+            {'Parameter':'Docs per month','Value':docs},
+            {'Parameter':'Monthly Cost','Value':round(total,2)}
+        ])
+        summary.to_excel(writer, index=False, sheet_name='Report', startrow=0)
+        df_comp.to_excel(writer, index=False, sheet_name='Report', startrow=len(summary)+2)
+        df_mc.to_excel(writer, index=False, sheet_name='Report', startrow=len(summary)+len(df_comp)+4)
+    buf.seek(0)
+    st.download_button("Download Excel Report", buf, "ai_ocr_report.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+else:
+    st.header("Document OCR Cost Comparison")
+    pages = st.sidebar.number_input("Pages/doc",    1, step=1)
+    docs  = st.sidebar.number_input("Docs/month",  100, step=1)
+    rates = {'Azure Read API':1.50/1000,'AWS Textract':1.50/1000,'Google OCR':1.50/1000}
+    ocr = []
+    for prov, rate in rates.items():
+        cost = pages*docs*rate
+        ocr.append({'Provider':prov,'Monthly Cost ($)':cost})
+    df_ocr = pd.DataFrame(ocr)
+    df_ocr['Monthly Cost ($)'] = df_ocr['Monthly Cost ($)'].map(lambda x: f"${x:,.2f}")
+    st.dataframe(df_ocr, use_container_width=True)
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+        params = pd.DataFrame([
+            {'Parameter':'Mode','Value':mode},
+            {'Parameter':'Pages/doc','Value':pages},
+            {'Parameter':'Docs/month','Value':docs}
+        ])
+        params.to_excel(writer, index=False, sheet_name='Report', startrow=0)
+        df_ocr.to_excel(writer, index=False, sheet_name='Report', startrow=len(params)+2)
+    buf.seek(0)
+    st.download_button("Download OCR Report", buf, "ocr_report.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# Sidebar footer
+st.sidebar.markdown("---")
+st.sidebar.info("Install: pip install streamlit pandas requests beautifulsoup4 && streamlit run cost_estimator.py")
